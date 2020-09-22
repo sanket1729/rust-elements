@@ -74,6 +74,10 @@ mod tests{
     use transaction::SigHashType;
     use super::*;
 
+    fn append_script(a: Script, b: Script) -> Script{
+        let x = [a.to_bytes(), b.to_bytes()].concat();
+        Script::from(x)
+    }
     #[derive(Debug)]
     pub struct ElementsUtxo{
         script_pubkey: bitcoin::Script,
@@ -204,15 +208,24 @@ mod tests{
         assert!(test_pk == test_priv_key.public_key(&secp));
         //
         // Create a covenant that captures value
+        // Create a pre-script
         let builder = bitcoin::blockdata::script::Builder::new();
         let mut tx = create_tx(0, 0);
-        let script_pubkey = builder.push_opcode(all::OP_OVER)
-        .push_opcode(all::OP_SHA256)
-        .push_slice(&test_pk.to_bytes())
-        .push_int(2).push_opcode(all::OP_PICK).push_int(1).push_opcode(all::OP_CAT).push_opcode(all::OP_OVER)
+        let pre_script = builder.push_opcode(all::OP_OVER)
+        .push_opcode(all::OP_SHA256).into_script();
+
+        // Create the PK part
+        let builder = bitcoin::blockdata::script::Builder::new();
+        let pk_script = builder
+        .push_slice(&test_pk.to_bytes()).into_script();
+
+        // Post script
+        let builder = bitcoin::blockdata::script::Builder::new();
+        let post_script = builder.push_int(2).push_opcode(all::OP_PICK).push_int(1).push_opcode(all::OP_CAT).push_opcode(all::OP_OVER)
         .push_opcode(all::OP_CHECKSIGVERIFY)
         .push_opcode(all::OP_CHECKSIGFROMSTACKVERIFY)
         .push_opcode(all::OP_DROP).into_script();
+        let script_pubkey = append_script(pre_script, append_script(pk_script, post_script));
         println!("{}", &script_pubkey);
         tx.output[0].script_pubkey = script_pubkey.to_v0_p2wsh();
 
