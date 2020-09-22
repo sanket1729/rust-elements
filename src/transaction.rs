@@ -500,6 +500,59 @@ impl TxOut {
     }
 }
 
+/// Hashtype of a transaction, encoded in the last byte of a signature
+/// Fixed values so they can be casted as integer types for encoding
+#[derive(PartialEq, Eq, Debug, Copy, Clone)]
+pub enum SigHashType {
+    /// 0x1: Sign all outputs
+    All		= 0x01,
+    /// 0x2: Sign no outputs --- anyone can choose the destination
+    None	= 0x02,
+    /// 0x3: Sign the output whose index matches this input's index. If none exists,
+    /// sign the hash `0000000000000000000000000000000000000000000000000000000000000001`.
+    /// (This rule is probably an unintentional C++ism, but it's consensus so we have
+    /// to follow it.)
+    Single	= 0x03,
+    /// 0x81: Sign all outputs but only this input
+    AllPlusAnyoneCanPay		= 0x81,
+    /// 0x82: Sign no outputs and only this input
+    NonePlusAnyoneCanPay	= 0x82,
+    /// 0x83: Sign one output and only this input (see `Single` for what "one output" means)
+    SinglePlusAnyoneCanPay	= 0x83
+}
+
+impl SigHashType {
+     /// Break the sighash flag into the "real" sighash flag and the ANYONECANPAY boolean
+     pub(crate) fn split_anyonecanpay_flag(self) -> (SigHashType, bool) {
+         match self {
+             SigHashType::All		=> (SigHashType::All, false),
+             SigHashType::None		=> (SigHashType::None, false),
+             SigHashType::Single	=> (SigHashType::Single, false),
+             SigHashType::AllPlusAnyoneCanPay		=> (SigHashType::All, true),
+             SigHashType::NonePlusAnyoneCanPay		=> (SigHashType::None, true),
+             SigHashType::SinglePlusAnyoneCanPay	=> (SigHashType::Single, true)
+         }
+     }
+
+     /// Reads a 4-byte uint32 as a sighash type
+     pub fn from_u32(n: u32) -> SigHashType {
+         match n & 0x9f {
+             // "real" sighashes
+             0x01 => SigHashType::All,
+             0x02 => SigHashType::None,
+             0x03 => SigHashType::Single,
+             0x81 => SigHashType::AllPlusAnyoneCanPay,
+             0x82 => SigHashType::NonePlusAnyoneCanPay,
+             0x83 => SigHashType::SinglePlusAnyoneCanPay,
+             // catchalls
+             x if x & 0x80 == 0x80 => SigHashType::AllPlusAnyoneCanPay,
+             _ => SigHashType::All
+         }
+     }
+
+     /// Converts to a u32
+     pub fn as_u32(self) -> u32 { self as u32 }
+}
 /// Elements transaction
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Transaction {
@@ -515,6 +568,7 @@ pub struct Transaction {
 serde_struct_impl!(Transaction, version, lock_time, input, output);
 
 impl Transaction {
+
     /// Whether the transaction is a coinbase tx
     pub fn is_coinbase(&self) -> bool {
         self.input.len() == 1 && self.input[0].is_coinbase()

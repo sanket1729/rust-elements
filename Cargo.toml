@@ -19,7 +19,7 @@ json-contract = [ "serde_json" ]
 "fuzztarget" = []
 
 [dependencies]
-bitcoin = "0.23"
+bitcoin = {git = "https://github.com/sanket1729/rust-bitcoin", branch = "checksigfromstk"}
 slip21 = "0.2.0"
 
 # While this dependency is included in bitcoin, we need this to use the macros.
