@@ -70,6 +70,7 @@ mod tests{
     use super::issuance::AssetId;
     use bip143::{self, SigHashCache};
     use bitcoin_hashes::sha256::Midstate;
+    use bitcoin_hashes::hash160;
     use encode::Encodable;
     use bitcoin::WScriptHash;
     use bitcoin::blockdata::script::Builder;
@@ -280,114 +281,135 @@ mod tests{
         // .push_int(33)
     }
 
-    fn get_covenant_script(pk: bitcoin::PublicKey, asset: confidential::Asset, collector_pk: Script) -> Script{
-//
-        // Create a covenant that captures value
-        // Create a pre-script
-        let builder = Builder::new();
-        let builder = builder.push_opcode(OP_OVER)
-        .push_opcode(OP_SHA256);
-
-        let scriptpk_len = 395;//Change this
-
-        // Create the PK part
-        let builder = builder
-        .push_slice(&pk.to_bytes());
+    fn hash_verify(builder: Builder, h: [u8; 20]) -> Builder{
+        builder
+        .push_opcode(OP_HASH160)
+        .push_slice(&h)
+        .push_opcode(OP_EQUALVERIFY)
+    }
+    // Given a script before OP_CODESEP, construct the script after it
+    // Assumes the stack structure as 
+    // [sig sighash pk pre]
+    // We have verified all the covenant logic. Now we only need to verify
+    // the sighash was constructed correctly.
+    fn post_code_sep(builder : Builder, h: [u8; 20]) -> Builder{
+        let builder = hash_verify(builder, h);
 
         // Post script
         let builder = builder.push_int(2).push_opcode(OP_PICK).push_int(1).push_opcode(OP_CAT).push_opcode(OP_OVER)
         .push_opcode(OP_CHECKSIGVERIFY)
-        .push_opcode(OP_CHECKSIGFROMSTACKVERIFY);
+        .push_opcode(OP_SWAP).push_opcode(OP_SHA256).push_opcode(OP_SWAP)
+        .push_opcode(OP_CHECKSIGFROMSTACK);
+        builder
+    }
 
-        // The sighash is now verified; now check all the fields in the transaction
-        // First get the script_pubkey onto the stack
-        let script_pubkey_start = 4 + 32 + 32 + 32 + 36 + 3;// The last 3 is for the size of len(script)
-        let post_start_index = 3 + 33;
-        let mut builder = builder.push_int(script_pubkey_start).push_opcode(OP_RIGHT)
-        .push_opcode(OP_DUP).push_opcode(OP_2DUP).push_opcode(OP_3DUP) 
+    fn pre_code_sep() -> Builder{
+        let builder = Builder::new();
+        builder.push_int(2).push_opcode(OP_PICK).push_opcode(OP_DROP)
+        .push_opcode(OP_CODESEPARATOR)
+    }
+
+    fn get_covenant_script(pk: bitcoin::PublicKey, asset: confidential::Asset, collector_pk: Script) -> Script{
+//
+        let scriptpk_len = 395;//Change this
+        // Create a covenant that captures value
+        // Create a pre-script
+        let builder = pre_code_sep();
+        let h = hash160::Hash::hash(&builder.clone().into_script().as_bytes());
+        let script = post_code_sep(builder, h.into_inner()).into_script();
+        script
+        // Find the pos of code_sep
         
-        // stack [witness.. scriptpk_*6]
-        // scriptpk_ denotes starting from scriptpk till the end of sighash
-        // Alt stack [None]
-        .push_int(scriptpk_len + 4 + 9).push_int(32).push_opcode(OP_SUBSTR)
-        .push_opcode(OP_TOALTSTACK)
 
-        // Stack [witnes... scriptpk_*5]
-        // Alt-stack [hashoutputs]
-        .push_int(scriptpk_len).push_opcode(OP_LEFT)
-        .push_opcode(OP_SHA256).push_opcode(OP_TOALTSTACK) 
+        // // The sighash is now verified; now check all the fields in the transaction
+        // // First get the script_pubkey onto the stack
+        // let script_pubkey_start = 4 + 32 + 32 + 32 + 36 + 3;// The last 3 is for the size of len(script)
+        // let post_start_index = 3 + 33;
+        // let mut builder = builder.push_int(script_pubkey_start).push_opcode(OP_RIGHT)
+        // .push_opcode(OP_DUP).push_opcode(OP_2DUP).push_opcode(OP_3DUP) 
         
-        // Stack [witnes... scriptpk_*4]
-        // Alt-stack [hashoutputs sha256(script_pubkey)]
-        .push_int(post_start_index).push_int(scriptpk_len - post_start_index)
-        .push_opcode(OP_SUBSTR).push_opcode(OP_TOALTSTACK)
-        // Stack [witnes... scriptpk_*3]
-        // Alt-stack [hashoutputs sha256(script_pubkey) post]
-        .push_int(3).push_opcode(OP_LEFT)
-        .push_opcode(OP_SWAP)
-        // Stack [witnes... script_pk_*2]
-        // Alt-stack [hashoutputs sha256(script_pubkey) post pre]
-        // Check input explicit???
-        .push_int(scriptpk_len).push_int(1).push_opcode(OP_SUBSTR)
-        .push_int(1).push_opcode(OP_EQUALVERIFY).push_opcode(OP_DROP)
+        // // stack [witness.. scriptpk_*6]
+        // // scriptpk_ denotes starting from scriptpk till the end of sighash
+        // // Alt stack [None]
+        // .push_int(scriptpk_len + 4 + 9).push_int(32).push_opcode(OP_SUBSTR)
+        // .push_opcode(OP_TOALTSTACK)
+
+        // // Stack [witnes... scriptpk_*5]
+        // // Alt-stack [hashoutputs]
+        // .push_int(scriptpk_len).push_opcode(OP_LEFT)
+        // .push_opcode(OP_SHA256).push_opcode(OP_TOALTSTACK) 
         
-        // Stack [witnes... script_pk_]
-        // Alt-stack [hashoutputs sha256(script_pubkey) post pre]
-        // Check total size???
-        .push_opcode(OP_SIZE).push_int(scriptpk_len + 9 + 4 + 32 + 4 + 4)
-        .push_opcode(OP_EQUALVERIFY).push_opcode(OP_DROP)
-
-        // Stack [witnes...]
-        // Alt-stack [hashoutputs sha256(script_pubkey) post pre]
-        .push_opcode(OP_FROMALTSTACK).push_opcode(OP_FROMALTSTACK);
-
-        // Stack [witnes... pre post]
-        // Alt-stack [hashoutputs sha256(script_pubkey)]
-        // Process atmost `k` keys
-        let num_cov_outs = 2;
-        for _ in 0..num_cov_outs{
-            builder = process_pk(builder)
-        }
-
-        // Stack [witness]
-        // Alt-stack [hashoutputs sha256(script_pubkey) sha256(pk1) sha256(pk2) sha256(pk3)]
-        // Process the outputs. Index 0 must be covenant fee output
-
-        // TODO: Change this
-        let builder = builder.push_opcode(OP_PUSHBYTES_0);// accumulator for TxOutput
-        let builder = checkelem_cat(builder, &serialize(&asset));
-        let builder = checksize_cat(builder, 9);
-
-        let mut remain_bytes = vec![0u8];
+        // // Stack [witnes... scriptpk_*4]
+        // // Alt-stack [hashoutputs sha256(script_pubkey)]
+        // .push_int(post_start_index).push_int(scriptpk_len - post_start_index)
+        // .push_opcode(OP_SUBSTR).push_opcode(OP_TOALTSTACK)
+        // // Stack [witnes... scriptpk_*3]
+        // // Alt-stack [hashoutputs sha256(script_pubkey) post]
+        // .push_int(3).push_opcode(OP_LEFT)
+        // .push_opcode(OP_SWAP)
+        // // Stack [witnes... script_pk_*2]
+        // // Alt-stack [hashoutputs sha256(script_pubkey) post pre]
+        // // Check input explicit???
+        // .push_int(scriptpk_len).push_int(1).push_opcode(OP_SUBSTR)
+        // .push_int(1).push_opcode(OP_EQUALVERIFY).push_opcode(OP_DROP)
         
-        assert!(collector_pk.is_v0_p2wsh());
-        remain_bytes.extend(&collector_pk.to_bytes());
-        let mut builder = checkelem_cat(builder, &remain_bytes);
+        // // Stack [witnes... script_pk_]
+        // // Alt-stack [hashoutputs sha256(script_pubkey) post pre]
+        // // Check total size???
+        // .push_opcode(OP_SIZE).push_int(scriptpk_len + 9 + 4 + 32 + 4 + 4)
+        // .push_opcode(OP_EQUALVERIFY).push_opcode(OP_DROP)
 
-        // Check the other outputs
-        let max_outputs = 2;
-        for _ in 0..max_outputs{
-            builder = process_output(builder, &serialize(&asset));
-        }
+        // // Stack [witnes...]
+        // // Alt-stack [hashoutputs sha256(script_pubkey) post pre]
+        // .push_opcode(OP_FROMALTSTACK).push_opcode(OP_FROMALTSTACK);
 
-        // If not having any change output. Allow the user to drop from alt stack
-        let builder = builder.push_opcode(OP_IF)
-            .push_opcode(OP_FROMALTSTACK)
-            .push_opcode(OP_DROP)
-        .push_opcode(OP_ENDIF);
+        // // Stack [witnes... pre post]
+        // // Alt-stack [hashoutputs sha256(script_pubkey)]
+        // // Process atmost `k` keys
+        // let num_cov_outs = 2;
+        // for _ in 0..num_cov_outs{
+        //     builder = process_pk(builder)
+        // }
 
-        // Get the last fee output
-        // Note we only check whether this has the correct size.
-        // None of the previous could have been fee output as they were forced
-        // to be p2wsh. 
-        let builder = checkelem_cat(builder, &serialize(&asset));
-        let builder = checksize_cat(builder, 9 + 1 + 1);
-        // Now calculate the hashoutput and match it
-        let builder = 
-            builder.push_opcode(OP_HASH256).push_opcode(OP_FROMALTSTACK).push_opcode(OP_EQUALVERIFY);
-        let script_pubkey = builder.into_script();
-        assert_eq!(scriptpk_len as usize, script_pubkey.len());
-        script_pubkey
+        // // Stack [witness]
+        // // Alt-stack [hashoutputs sha256(script_pubkey) sha256(pk1) sha256(pk2) sha256(pk3)]
+        // // Process the outputs. Index 0 must be covenant fee output
+
+        // // TODO: Change this
+        // let builder = builder.push_opcode(OP_PUSHBYTES_0);// accumulator for TxOutput
+        // let builder = checkelem_cat(builder, &serialize(&asset));
+        // let builder = checksize_cat(builder, 9);
+
+        // let mut remain_bytes = vec![0u8];
+        
+        // assert!(collector_pk.is_v0_p2wsh());
+        // remain_bytes.extend(&collector_pk.to_bytes());
+        // let mut builder = checkelem_cat(builder, &remain_bytes);
+
+        // // Check the other outputs
+        // let max_outputs = 2;
+        // for _ in 0..max_outputs{
+        //     builder = process_output(builder, &serialize(&asset));
+        // }
+
+        // // If not having any change output. Allow the user to drop from alt stack
+        // let builder = builder.push_opcode(OP_IF)
+        //     .push_opcode(OP_FROMALTSTACK)
+        //     .push_opcode(OP_DROP)
+        // .push_opcode(OP_ENDIF);
+
+        // // Get the last fee output
+        // // Note we only check whether this has the correct size.
+        // // None of the previous could have been fee output as they were forced
+        // // to be p2wsh. 
+        // let builder = checkelem_cat(builder, &serialize(&asset));
+        // let builder = checksize_cat(builder, 9 + 1 + 1);
+        // // Now calculate the hashoutput and match it
+        // let builder = 
+        //     builder.push_opcode(OP_HASH256).push_opcode(OP_FROMALTSTACK).push_opcode(OP_EQUALVERIFY);
+        // let script_pubkey = builder.into_script();
+        // assert_eq!(scriptpk_len as usize, script_pubkey.len());
+        // script_pubkey
     }
     #[test]
     fn simple_covenant(){
@@ -423,8 +445,8 @@ mod tests{
             lock_time: 0,
             input: vec![TxIn {
                 previous_output: OutPoint {
-                    txid: bitcoin::Txid::from_str("00d37b7b36a6d6a353a9645a542264fa2e7a1c08b2b1ddbac99789df112d7f5f").unwrap(),
-                    vout: 0,
+                    txid: bitcoin::Txid::from_str("e79659cb4925cd88cfa722c907c9828cd476c5b1e6d3c71a92a727c79e49d08e").unwrap(),
+                    vout: 1,
                 },
                 sequence: 0xfffffffe,
                 is_pegin: false,
@@ -479,9 +501,12 @@ mod tests{
         };
 
 
+        let pre_code = pre_code_sep().into_script().into_bytes();
+        let script_code = 
+        post_code_sep(Builder::new(), hash160::Hash::hash(&pre_code).into_inner()).into_script();
         let mut cache = SigHashCache::new(&spend_tx);
         let sighash_type = SigHashType::from_u32(1);
-        let actual_result = cache.signature_hash(0, &script_pubkey, confidential::Value::Explicit(0x0000000005f5e100), sighash_type);
+        let actual_result = cache.signature_hash(0, &script_code, confidential::Value::Explicit(0x0000000005f5e100), sighash_type);
         // let mut enc = SigHash::engine();
         println!("{:x?}", &actual_result);
         let mut ser_out = vec![];
@@ -502,9 +527,14 @@ mod tests{
         let ser_sig = Vec::from(sig.serialize_der().as_ref());
         
         // ser_sig.push(1u8); // sighash all
-
         println!("Msg len: {}", sighash_msg.len());
-        spend_tx.input[0].witness.script_witness = vec![sighash_msg, ser_sig, script_pubkey.into_bytes()];
+        let mut stk = vec![ser_sig, sighash_msg, test_pk.to_bytes(), pre_code];
+
+        // let mut interp = interpreter::State::init_witness(stk.clone());
+        // interp.execute_script(script_pubkey.clone());
+
+        stk.push(script_pubkey.clone().into_bytes());
+        spend_tx.input[0].witness.script_witness = stk;
         println!("{}", serialize_hex(&spend_tx));
     }
 }

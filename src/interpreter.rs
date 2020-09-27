@@ -13,11 +13,27 @@ use bitcoin::hashes::Hash;
 use std::io;
 
 #[derive(Debug, Clone)]
-struct State{
+pub struct State{
     stack: Vec<Vec<u8>>,
     alt_stack: Vec<Vec<u8>>, 
 }
 
+impl State{
+
+    fn print(&self) {
+        println!("Stack:");
+        for v in &self.stack{
+            println!("{:x?}", v);
+        }
+        println!();
+
+        println!("Alt-Stack:");
+        for v in &self.alt_stack{
+            println!("{:x?}", v);
+        }
+        println!();
+    }
+}
 /// Helper to encode an integer in script format
 fn build_scriptint(n: i64) -> Vec<u8> {
     if n == 0 { return vec![] }
@@ -76,6 +92,21 @@ impl State{
             /// Some non-push opcode
             Instruction::Op(op) => {
                 match op{
+                    OP_CODESEPARATOR => {}
+                    OP_HASH160 => {
+                        let a = self.stack.pop().expect("OP_CAT pop error");
+                        let h= bitcoin::hashes::hash160::Hash::hash(&a);
+                        self.stack.push(Vec::from(h.into_inner()));                    
+                    }
+                    OP_PUSHNUM_2 => {
+                        self.stack.push(vec![2u8]);
+                    }
+                    OP_PUSHNUM_1 => {
+                        self.stack.push(vec![1u8]);
+                    }
+                    OP_PUSHNUM_3 => {
+                        self.stack.push(vec![3u8]);
+                    }
                     OP_CAT => {
                         let a = self.stack.pop().expect("OP_CAT pop error");
                         let mut b = self.stack.pop().expect("OP_CAT pop error");
@@ -99,10 +130,11 @@ impl State{
                         self.stack.pop().unwrap();
                         self.stack.pop().unwrap();
                     }
-                    OP_CHECKSIGFROMSTACKVERIFY =>{
+                    OP_CHECKSIGFROMSTACK =>{
                         self.stack.pop().unwrap();
                         self.stack.pop().unwrap();
                         self.stack.pop().unwrap();
+                        self.stack.push(vec![1u8]);
                     }
                     OP_RIGHT =>{
                         let ind = read_scriptint(&self.stack.pop().unwrap()).unwrap() as usize;
@@ -214,15 +246,18 @@ impl State{
     pub fn execute_script(&mut self, script: Script){
         let mut ctx = Context::NoContext;
         for ins in script.iter(true){
-            self.step(ins, &mut ctx);
+            self.step(ins.clone(), &mut ctx);
 
             let mut input = String::new();
             println!("Type y for step; n for exit");
             match io::stdin().read_line(&mut input) {
                 Ok(_n) => {
-                    if input == "y" {
+                    if input == "y\n" {
+                        println!("{:?}", ins);
+                        self.print();
                         continue;
                     } else{
+                        dbg!(input);
                         break
                     }
                 }
