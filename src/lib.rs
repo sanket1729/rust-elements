@@ -47,6 +47,8 @@ pub mod issuance;
 mod transaction;
 pub mod slip77;
 
+mod interpreter;
+
 // export everything at the top level so it can be used as `elements::Transaction` etc.
 pub use address::{Address, AddressParams, AddressError};
 pub use transaction::{OutPoint, PeginData, PegoutData, TxIn, TxOut, TxInWitness, TxOutWitness, Transaction, AssetIssuance};
