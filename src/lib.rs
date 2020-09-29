@@ -69,216 +69,169 @@ mod tests{
     use super::confidential;
     use super::issuance::AssetId;
     use bip143::{self, SigHashCache};
+    use std::str::FromStr;
     use bitcoin_hashes::sha256::Midstate;
     use bitcoin_hashes::hash160;
     use encode::Encodable;
     use bitcoin::WScriptHash;
+    use bitcoin::secp256k1::Secp256k1;
     use bitcoin::blockdata::script::Builder;
     use super::{Transaction, TxIn, OutPoint, AssetIssuance, TxInWitness, TxOut, TxOutWitness};
 
     use transaction::SigHashType;
     use super::*;
 
+    const BTC_ASSET : [u8; 32] = [
+        0x23, 0x0f, 0x4f, 0x5d, 0x4b, 0x7c, 0x6f, 0xa8, 0x45, 0x80, 0x6e, 0xe4, 0xf6, 0x77,
+        0x13, 0x45, 0x9e, 0x1b, 0x69, 0xe8, 0xe6, 0x0f, 0xce, 0xe2, 0xe4, 0x94, 0x0c, 0x7a,
+        0x0d, 0x5d, 0xe1, 0xb2,
+    ];
+
     fn append_script(a: Script, b: Script) -> Script{
         let x = [a.to_bytes(), b.to_bytes()].concat();
         Script::from(x)
     }
-    #[derive(Debug)]
-    pub struct ElementsUtxo{
-        script_pubkey: bitcoin::Script,
-        asset: confidential::Asset,
-        value: confidential::Value,
+    #[derive(Debug, Clone)]
+    // All the info required for covenant script creation.
+    // Does *NOT* include information for witness script creation
+    pub struct CovenantScriptContext{
+        pub traded_asset: confidential::Asset,
+        pub redeem_pk: bitcoin::PublicKey,
+        pub fee_collector_wsh : Script,
+        // server pks
+        pub fee_collector_srv_pk: bitcoin::PublicKey,
+        pub timestamp_srv_pk: bitcoin::PublicKey,
     }
 
-    fn create_tx(_num_inputs: usize, _num_outputs: usize) -> Transaction{
-              /*
-        rawTransaction testTx1 = (rawTransaction)
-          { .input = (rawInput[])
-                     { { .prevTxid = (unsigned char[32]){"\xeb\x04\xb6\x8e\x9a\x26\xd1\x16\x04\x6c\x76\xe8\xff\x47\x33\x2f\xb7\x1d\xda\x90\xff\x4b\xef\x53\x70\xf2\x52\x26\xd3\xbc\x09\xfc"}
-                       , .prevIx = 0
-                       , .sequence = 0xfffffffe
-                       , .isPegin = false
-                       , .issuance = {0}
-                       , .txo = { .asset = (unsigned char[33]){"\x01\x23\x0f\x4f\x5d\x4b\x7c\x6f\xa8\x45\x80\x6e\xe4\xf6\x77\x13\x45\x9e\x1b\x69\xe8\xe6\x0f\xce\xe2\xe4\x94\x0c\x7a\x0d\x5d\xe1\xb2"}
-                                , .value = (unsigned char[9]){"\x01\x00\x00\x00\x02\x54\x0b\xe4\x00"}
-                                , .scriptPubKey = {0}
-                     } }        }
-          , .output = (rawOutput[])
-                      { { .asset = (unsigned char[33]){"\x01\x23\x0f\x4f\x5d\x4b\x7c\x6f\xa8\x45\x80\x6e\xe4\xf6\x77\x13\x45\x9e\x1b\x69\xe8\xe6\x0f\xce\xe2\xe4\x94\x0c\x7a\x0d\x5d\xe1\xb2"}
-                        , .value = (unsigned char[9]){"\x01\x00\x00\x00\x02\x54\x0b\xd7\x1c"}
-                        , .nonce = NULL
-                        , .scriptPubKey = { .code = (unsigned char [26]){"\x19\x76\xa9\x14\x48\x63\x3e\x2c\x0e\xe9\x49\x5d\xd3\xf9\xc4\x37\x32\xc4\x7f\x47\x02\xa3\x62\xc8\x88\xac"}
-                                          , .len = 26
-                                          }
-                        }
-                      , { .asset = (unsigned char[33]){"\x01\x23\x0f\x4f\x5d\x4b\x7c\x6f\xa8\x45\x80\x6e\xe4\xf6\x77\x13\x45\x9e\x1b\x69\xe8\xe6\x0f\xce\xe2\xe4\x94\x0c\x7a\x0d\x5d\xe1\xb2"}
-                        , .value = (unsigned char[9]){"\x01\x00\x00\x00\x00\x00\x00\x0c\xe4"}
-                        , .nonce = NULL
-                        , .scriptPubKey = {0}
-                      } }
-          , .numInputs = 1
-          , .numOutputs = 2
-          , .version = 0x00000002
-          , .lockTime = 0x00000000
-          };
-        */
-        let asset: [u8; 32] = [
-            0x23, 0x0f, 0x4f, 0x5d, 0x4b, 0x7c, 0x6f, 0xa8, 0x45, 0x80, 0x6e, 0xe4, 0xf6, 0x77,
-            0x13, 0x45, 0x9e, 0x1b, 0x69, 0xe8, 0xe6, 0x0f, 0xce, 0xe2, 0xe4, 0x94, 0x0c, 0x7a,
-            0x0d, 0x5d, 0xe1, 0xb2,
+
+    // Information required for constructing the complete 
+    // transaction input with witness 
+    pub struct CovenantTxContext{
+        // Transaction skeleton
+        // These things are to be constructed after the transaction is 
+        // constructed as they require sighash, signatures etc..
+        pub tx: Transaction,
+        pub index: usize,
+        // The covenant script context
+        pub cov_script_ctx: CovenantScriptContext,
+        pub receiver_pk: bitcoin::PublicKey,
+        //amts
+        pub sent_amt: confidential::Value,
+        pub change_amt: confidential::Value,
+        pub fee_amt: confidential::Value,
+        pub tx_fee_btc: confidential::Value,
+
+        pub redeem_priv_key: bitcoin::PrivateKey,
+
+        // Sigs and msgs
+        pub timestamp_srv_msg : Vec<u8>,
+        pub timestamp_srv_sig : Vec<u8>,
+        pub fee_srv_msg : Vec<u8>,
+        pub fee_srv_sig : Vec<u8>,
+    }
+
+
+    fn finalize(ctx: &mut CovenantTxContext){
+
+        // Set the relevant outputs
+        let change_amt = get_exp_amt(ctx.change_amt);
+        let sent_amt = get_exp_amt(ctx.sent_amt);
+        let fee_amt = get_exp_amt(ctx.fee_amt);
+
+        let btc_ast = confidential::Asset::Explicit(AssetId::from_inner(Midstate(BTC_ASSET)));
+        let mut btc_ast_plus_exp_pref = serialize(&btc_ast);
+        btc_ast_plus_exp_pref.push(1u8);
+
+        
+        let pre_code = pre_code_sep(&ctx.cov_script_ctx).into_script().into_bytes();
+        let script_code = 
+            post_code_sep(Builder::new(), hash160::Hash::hash(&pre_code).into_inner(), ctx.cov_script_ctx.redeem_pk).into_script();
+        
+        let script_pubkey = get_covenant_script(&ctx.cov_script_ctx);
+        let sighash_msg : Vec<u8>;
+        let redeem_sig;
+        {
+            let tx = &mut ctx.tx;
+            // The first output must be fee output
+            tx.output.push(TxOut::default());
+            tx.output[0].asset = ctx.cov_script_ctx.traded_asset;
+            tx.output[0].value = ctx.fee_amt;
+            tx.output[0].nonce = confidential::Nonce::Null;
+            tx.output[0].script_pubkey = ctx.cov_script_ctx.fee_collector_wsh.clone();
+            
+            tx.output.push(TxOut::default());
+            // The second output is reciver amount
+            tx.output[1].asset = ctx.cov_script_ctx.traded_asset;
+            tx.output[1].value = ctx.sent_amt;
+            tx.output[1].nonce = confidential::Nonce::Null;
+            {
+                let mut output_ctx = ctx.cov_script_ctx.clone();
+                // change pk
+                output_ctx.redeem_pk = ctx.receiver_pk;
+                tx.output[1].script_pubkey = get_covenant_script(&output_ctx).to_v0_p2wsh();
+            }
+
+
+            tx.output.push(TxOut::default());
+            // The third output is the change output
+            tx.output[2].asset = ctx.cov_script_ctx.traded_asset;
+            tx.output[2].value = ctx.change_amt;
+            tx.output[2].nonce = confidential::Nonce::Null;
+            tx.output[2].script_pubkey = script_pubkey.to_v0_p2wsh();
+            
+            tx.output.push(TxOut::default());
+            // The final output is bitcoin fees output
+            tx.output[3].asset = btc_ast;
+            tx.output[3].value = ctx.tx_fee_btc;
+            tx.output[3].nonce = confidential::Nonce::Null;
+            tx.output[3].script_pubkey = Script::new();
+
+        }
+        let tx = &ctx.tx;
+        let mut cache = SigHashCache::new(tx);
+        let sighash_type = SigHashType::from_u32(1);//sighash all
+        let actual_result = cache.signature_hash(
+            0, 
+            &script_code, 
+            confidential::Value::Explicit(0x0000000005f5e100), 
+            sighash_type,
+        );
+        // let mut enc = SigHash::engine();
+        // println!("{:x?}", &actual_result);
+        // println!("{:x?}", serialize(&spend_tx.output[0].script_pubkey));
+        // assert_eq!(actual_result[8], SigHash::hash(&ser_out).into_inner());
+        let secp = Secp256k1::new();
+        sighash_msg = actual_result.clone().into_iter().flatten().collect();
+        let mut eng = SigHash::engine();
+        use bitcoin_hashes::HashEngine;
+        eng.input(&sighash_msg);
+        let sighash_u256 = SigHash::from_engine(eng);
+
+        println!("{} Msg here", sighash_u256);
+        let sig = secp.sign( 
+            &bitcoin::secp256k1::Message::from_slice(&sighash_u256[..]).unwrap(), 
+            &ctx.redeem_priv_key.key);
+        redeem_sig = Vec::from(sig.serialize_der().as_ref());
+
+
+        let stk = vec![
+            redeem_sig, 
+            serialize(&u64::swap_bytes(change_amt)), 
+            serialize(&u64::swap_bytes(sent_amt)),
+            serialize(&u64::swap_bytes(fee_amt)),
+            ctx.receiver_pk.to_bytes(),
+            btc_ast_plus_exp_pref,
+            Vec::from(&serialize(&tx.output[3])[34..]),
+            ctx.timestamp_srv_sig.clone(),
+            ctx.timestamp_srv_msg.clone(),
+            ctx.fee_srv_sig.clone(),
+            ctx.fee_srv_msg.clone(),
+            sighash_msg,
+            pre_code,
+            script_pubkey.into_bytes(),
         ];
-        let tx_id: [u8; 32] = [
-            0xeb, 0x04, 0xb6, 0x8e, 0x9a, 0x26, 0xd1, 0x16, 0x04, 0x6c, 0x76, 0xe8, 0xff, 0x47,
-            0x33, 0x2f, 0xb7, 0x1d, 0xda, 0x90, 0xff, 0x4b, 0xef, 0x53, 0x70, 0xf2, 0x52, 0x26,
-            0xd3, 0xbc, 0x09, 0xfc,
-        ];
-        let asset = confidential::Asset::Explicit(AssetId::from_inner(Midstate(asset)));
-        //create the txenv
-        let elements_tx = Transaction {
-            version: 2,
-            lock_time: 0,
-            input: vec![TxIn {
-                previous_output: OutPoint {
-                    txid: bitcoin::Txid::from_inner(tx_id),
-                    vout: 0,
-                },
-                sequence: 0xfffffffe,
-                is_pegin: false,
-                has_issuance: false,
-                // perhaps make this an option in elements upstream?
-                asset_issuance: AssetIssuance {
-                    asset_blinding_nonce: [0; 32],
-                    asset_entropy: [0; 32],
-                    amount: confidential::Value::Null,
-                    inflation_keys: confidential::Value::Null,
-                },
-                script_sig: Script::new(),
-                witness: TxInWitness {
-                    amount_rangeproof: vec![],
-                    inflation_keys_rangeproof: vec![],
-                    script_witness: vec![],
-                    pegin_witness: vec![],
-                },
-            }],
-            output: vec![
-                TxOut {
-                    asset: asset.clone(),
-                    value: confidential::Value::Explicit(0x00000002540bd71c),
-                    nonce: confidential::Nonce::Null,
-                    script_pubkey: hex_script(
-                        &"1976a91448633e2c0ee9495dd3f9c43732c47f4702a362c888ac",
-                    ),
-                    witness: TxOutWitness {
-                        surjection_proof: vec![],
-                        rangeproof: vec![],
-                    },
-                },
-            ],
-        };
-        let utxo =  ElementsUtxo{
-            script_pubkey: bitcoin::Script::new(),
-            asset: asset,
-            value: confidential::Value::Explicit(0x00000002540be400),
-        };
-
-        elements_tx
-    }
-
-    /// Calculate the sighash for elements transaction
-    pub fn sighash_message(tx: &Transaction) -> Vec<u8>{
-        let mut ret = vec![];
-        ret.extend(serialize(&tx.version));
-        ret
-    }
-
-    fn hex_script(s: &str) -> bitcoin::Script {
-        let v: Vec<u8> = bitcoin::hashes::hex::FromHex::from_hex(s).unwrap();
-        bitcoin::Script::from(v)
-    }
-
-    // Assuming the top of stack as `s`, returns 
-    // `s` `s s[start: start + size]`
-    fn op_substr(start: i64, size: i64){
-        let builder = Builder::new();
-        builder.push_opcode(OP_DUP)
-        .push_int(start).push_int(size)
-        .push_opcode(OP_SUBSTR).into_script();
-    }
-
-    // Assuming the top of stack as `s`, returns 
-    // `s` `s s[start: start + size]`
-    fn op_right(size: i64){
-        let builder = Builder::new();
-        builder.push_int(size)
-        .push_opcode(OP_RIGHT).into_script();
-    }
-
-    // Inttial:
-    // Stack [witnes pk2.. 1/0 pre post]
-    // Alt-stack [hashoutputs sha256(script_pk1)]
-    //
-    // Final:
-    // Stack [witness.. pre post]
-    // Alt-stack [hashoutputs sha256(script_pk1) sha256(pk2)]
-    fn process_pk(builder: Builder) -> Builder{
-        builder.push_opcode(OP_2SWAP)
-        .push_opcode(OP_IF)
-            .push_opcode(OP_3DUP).push_opcode(OP_SWAP).push_opcode(OP_CAT).push_opcode(OP_CAT)
-            .push_opcode(OP_SHA256).push_opcode(OP_TOALTSTACK).push_opcode(OP_DROP)
-        .push_opcode(OP_ELSE)
-            .push_opcode(OP_2DROP)
-        .push_opcode(OP_ENDIF)
-    }
-
-    // Assert the size of the second to top element and then cat it
-    fn checksize_cat(builder : Builder, size: i64) -> Builder{
-        builder.push_opcode(OP_SWAP).push_opcode(OP_SIZE).push_int(size).push_opcode(OP_EQUALVERIFY).push_opcode(OP_CAT)
-    }
-
-    // Assert the second to top elem and cat it
-    fn checkelem_cat(builder : Builder, elem: &[u8]) -> Builder{
-        builder.push_opcode(OP_SWAP).push_opcode(OP_DUP).push_slice(elem).push_opcode(OP_EQUALVERIFY).push_opcode(OP_CAT)
-    }
-
-    // Construct an output from individual elements
-    // assumes the stack structure as:
-    // [script_pk, nonce, value, asset, acc]
-    // Returns the stack as 
-    // [{acc + asset + value + nonce + script_pk}] as a single elem
-    fn process_output(builder: Builder, asset: &[u8]) -> Builder{
-        let builder= builder.push_opcode(OP_SWAP)
-        .push_opcode(OP_SIZE).push_int(32).push_opcode(OP_EQUALVERIFY) // check size
-        .push_int(1).push_opcode(OP_SWAP).push_opcode(OP_CAT)// add explicit prefix
-        .push_opcode(OP_DUP)
-        .push_slice(asset).push_opcode(OP_EQUAL).push_opcode(OP_TOALTSTACK) // is_covenant_output? pushed to altstack
-        .push_opcode(OP_CAT).push_opcode(OP_SWAP);
-
-        builder.push_opcode(OP_SIZE).push_int(8).push_opcode(OP_EQUALVERIFY) // check size of value
-        .push_opcode(OP_DUP)
-        .push_int(1).push_opcode(OP_SWAP).push_opcode(OP_CAT)
-        .push_slice(&[0u8, 33u8, 0u8]).push_opcode(OP_CAT)
-        .push_opcode(OP_FROMALTSTACK)
-        .push_opcode(OP_IF)
-            .push_opcode(OP_FROMALTSTACK)
-            .push_opcode(OP_CAT)
-            .push_opcode(OP_NIP)//drop the value for now
-        .push_opcode(OP_ELSE)
-            .push_opcode(OP_NIP).push_opcode(OP_ROT)
-            .push_opcode(OP_SIZE).push_int(32).push_opcode(OP_EQUALVERIFY)
-            .push_opcode(OP_CAT)
-        .push_opcode(OP_ENDIF)
-        .push_opcode(OP_CAT)
-
-        //Value is built on the stack
-        // .push_opcode(OP_SWAP)
-
-        // .push_opcode(OP_IF)
-        //     .push_opcode(OP_DUP).push_opcode(OP_TOALTSTACK)
-        //     .push_int(1).push_opcode(OP_SWAP)
-        // .push_opcode(OP_ENDIF)
-        // .push_int(1).push_opcode(OP_SWAP).push_opcode(OP_CAT)
-        // .push_opcode(OP_CAT).push_opcode(OP_SWAP)
-        // .push_int(33)
+        let input = &mut ctx.tx.input[ctx.index];
+        input.witness.script_witness = stk;
     }
 
     fn hash_verify(builder: Builder, h: [u8; 20]) -> Builder{
@@ -292,8 +245,11 @@ mod tests{
     // [sig sighash pk pre]
     // We have verified all the covenant logic. Now we only need to verify
     // the sighash was constructed correctly.
-    fn post_code_sep(builder : Builder, h: [u8; 20]) -> Builder{
+    fn post_code_sep(builder : Builder, h: [u8; 20], redeem_pk: bitcoin::PublicKey) -> Builder{
         let builder = hash_verify(builder, h);
+        // pub pubkey
+        assert!(redeem_pk.compressed);
+        let builder = builder.push_key(&redeem_pk);
 
         // Post script
         let builder = builder.push_int(2).push_opcode(OP_PICK).push_int(1).push_opcode(OP_CAT).push_opcode(OP_OVER)
@@ -303,238 +259,288 @@ mod tests{
         builder
     }
 
-    fn pre_code_sep() -> Builder{
+    fn pre_code_sep(ctx: &CovenantScriptContext) -> Builder{
+
+        let asset = ctx.traded_asset;
+        let fee_srv_pk = ctx.fee_collector_srv_pk;
+        let fee_collector_wsh = &ctx.fee_collector_wsh;
+        let timestamp_srv_pk = ctx.timestamp_srv_pk;
+        // let mut stk = vec![ser_sig, serialize(&1000_000_u64), serialize(&98_000_000_u64),serialize(&1000_000_u64), recv_pk, btc_fee_asset, btc_asset_ser, sighash_msg, pre_code];
+        let mut stk_size = 13;
         let builder = Builder::new();
-        builder.push_int(2).push_opcode(OP_PICK).push_opcode(OP_DROP)
-        .push_opcode(OP_CODESEPARATOR)
+        let builder = builder.push_opcode(OP_OVER)
+        // Now create the post script from script pubkey.
+        // The stack contains [sig sighash pre sighash]
+        // First get the hashoutputs from sighash
+        .push_opcode(OP_DUP);
+        stk_size += 2;
+        // Calulate the len of post_script by feeding in dummy values
+        let post_code_sep_len;
+        {
+            let pk = bitcoin::PublicKey::from_slice(&[0x02;33]).unwrap();
+            post_code_sep_len = 
+                serialize(&post_code_sep(Builder::new(), [0u8; 20], pk).into_script()).len();
+        }
+        let outpoint_start = 4 + 32 + 32 + 32;
+        let hashouputs_start = 4 + 32 + 32 + 32 + (32 + 4) + post_code_sep_len + 9 + 4;
+        let script_pubkey_start = 4 + 32 + 32 + 32 + (32 + 4) + 1;// assumes 1 byte len
+
+        // Get the custom txid for the transaction onto the alt-stack
+        // Calculated as
+        // SHA2(version|| hashsequences || hashinputs || hashissuances|| hashoutputs||locktime || sighashflag)
+        let builder = builder.push_opcode(OP_2DUP)
+        .push_int(outpoint_start).push_opcode(OP_LEFT).push_opcode(OP_SWAP)
+        .push_int(hashouputs_start as i64).push_opcode(OP_RIGHT).push_opcode(OP_CAT)
+        .push_opcode(OP_SHA256).push_opcode(OP_TOALTSTACK);
+        let builder = builder.push_int(hashouputs_start as i64).push_int(32).push_opcode(OP_SUBSTR)
+        .push_opcode(OP_TOALTSTACK);
+        stk_size += -1;
+        // Next get the change sha2(scriptpubkey)
+        let builder = builder.push_int(script_pubkey_start)
+        .push_int((post_code_sep_len - 1) as i64).push_opcode(OP_SUBSTR)
+        .push_opcode(OP_2DUP).push_opcode(OP_CAT)
+        // Now the redeem script is top of stack
+        .push_opcode(OP_SHA256).push_opcode(OP_TOALTSTACK);
+        stk_size += 0;
+        // The len
+        let pre_publickey_push_len =  hash_verify(Builder::new(), [0u8;20]).into_script().len();
+        let builder  = builder.push_opcode(OP_DUP).push_int((pre_publickey_push_len + 1) as i64) // + 1 for 0x21(len of pk)
+        .push_opcode(OP_LEFT)
+        .push_int((stk_size + 1) - 5).push_opcode(OP_ROLL)
+        //now stack is [.. script_pk pre pk]
+        .push_opcode(OP_CAT).push_opcode(OP_SWAP)
+        .push_int((pre_publickey_push_len + 34) as i64)
+        .push_opcode(OP_RIGHT).push_opcode(OP_CAT)
+        .push_opcode(OP_OVER).push_opcode(OP_SWAP).push_opcode(OP_CAT)
+        // now stack is [.. script_pk_receiver]
+        .push_opcode(OP_SHA256).push_opcode(OP_TOALTSTACK);
+        stk_size -= 2;
+        // Process the fee output
+        let mut pre_value_blob = vec![];
+        pre_value_blob.extend(&serialize(&asset)); // asset
+        pre_value_blob.push(1u8);// explicit prefix;
+        let mut post_value_blob = vec![0u8]; // nonce
+        assert!(fee_collector_wsh.is_v0_p2wsh());
+        post_value_blob.extend(serialize(fee_collector_wsh));
+        let builder = builder.push_slice(&pre_value_blob).push_opcode(OP_DUP);
+        stk_size += 2;
+        let builder = builder
+        .push_int(stk_size - 4).push_opcode(OP_PICK)
+        .push_opcode(OP_SIZE).push_int(8).push_opcode(OP_EQUALVERIFY)
+        .push_opcode(OP_CAT) // value; deal with this later
+        .push_slice(&post_value_blob).push_opcode(OP_CAT).push_opcode(OP_SWAP);
+        stk_size += 0;
+        // Process the other reiever output
+        let builder = 
+        builder.push_opcode(OP_DUP).push_int((stk_size + 1) - 3).push_opcode(OP_PICK)
+        .push_opcode(OP_SIZE).push_int(8).push_opcode(OP_EQUALVERIFY)
+        .push_opcode(OP_CAT).push_slice(&[0u8, 34u8, 0u8, 32u8]).push_opcode(OP_CAT)
+        .push_opcode(OP_FROMALTSTACK).push_opcode(OP_CAT).push_opcode(OP_SWAP);
+        stk_size += 1;
+        // Get the target and change outputs.
+        let builder = builder.push_opcode(OP_DUP).push_int((stk_size + 1) - 2).push_opcode(OP_PICK)
+        .push_opcode(OP_SIZE).push_int(8).push_opcode(OP_EQUALVERIFY)
+        .push_opcode(OP_CAT).push_slice(&[0u8, 34u8, 0u8, 32u8]).push_opcode(OP_CAT)
+        .push_opcode(OP_FROMALTSTACK).push_opcode(OP_CAT).push_opcode(OP_SWAP);
+        // same stk size here as the start
+        stk_size += 1;
+        let builder = builder.push_int(stk_size - 5).push_opcode(OP_ROLL).push_opcode(OP_DUP)
+        .push_opcode(OP_ROT)
+        .push_opcode(OP_EQUAL).push_int(0).push_opcode(OP_EQUALVERIFY);
+        //
+        stk_size -= 1;
+        let builder = builder.push_int(stk_size - 5).push_opcode(OP_ROLL)
+        // check size
+        .push_opcode(OP_SIZE).push_int(8 + 1 + 1).push_opcode(OP_EQUALVERIFY)
+        .push_opcode(OP_CAT);
+        stk_size -= 1;
+
+        let builder = builder.push_opcode(OP_CAT).push_opcode(OP_CAT).push_opcode(OP_CAT);
+        stk_size -= 3;
+        // now sighash for hashoutputs in on the top of stack
+         let builder = builder.push_opcode(OP_HASH256)
+        .push_opcode(OP_FROMALTSTACK)
+        .push_opcode(OP_EQUALVERIFY);
+        stk_size -= 1;
+        assert!(stk_size == 10);
+        
+        // Now check the sigs and fee calculation
+        // Attest that the timestamping server digest is correct
+        let builder = builder.push_int(stk_size - 5).push_opcode(OP_ROLL);
+        let builder = builder.push_int(stk_size - 5).push_opcode(OP_PICK);
+        let builder = builder.push_key(&timestamp_srv_pk).push_opcode(OP_CHECKSIGFROMSTACKVERIFY);
+        stk_size -= 1;
+        let builder = builder.push_int(stk_size - 5).push_opcode(OP_ROLL)
+        .push_opcode(OP_DUP).push_int(32).push_opcode(OP_LEFT)
+        .push_opcode(OP_FROMALTSTACK).push_opcode(OP_EQUALVERIFY)
+        .push_int(32).push_opcode(OP_RIGHT);
+        stk_size += 0;
+        // The top of stack now contains the timestamp
+        // timestamp is assumed to be 32 bytes
+
+
+        let builder = builder.push_int(stk_size - 5).push_opcode(OP_ROLL);
+        let builder = builder.push_int(stk_size - 5).push_opcode(OP_PICK);
+        let builder = builder.push_key(&fee_srv_pk).push_opcode(OP_CHECKSIGFROMSTACKVERIFY);
+        stk_size -= 1;
+        let builder = builder.push_int(stk_size - 5).push_opcode(OP_ROLL)
+        .push_opcode(OP_DUP).push_int(32).push_opcode(OP_LEFT)
+        .push_opcode(OP_ROT).push_opcode(OP_EQUALVERIFY)//check the timestamps
+        .push_int(32).push_opcode(OP_RIGHT) //Fee rate is now top of stack
+        .push_opcode(OP_DROP);// drop the fee rate for now
+        // let builder = builder.push_int(stk_size - 5).push_opcode(OP_ROLL);
+
+        let builder = builder.push_int(stk_size - 2).push_opcode(OP_ROLL).push_opcode(OP_DROP);
+        stk_size -=1;
+        let builder = builder.push_int(stk_size - 2).push_opcode(OP_ROLL).push_opcode(OP_DROP);
+        stk_size -=1;
+        let builder = builder.push_int(stk_size - 2).push_opcode(OP_ROLL).push_opcode(OP_DROP);
+        stk_size -=1;
+        builder.push_opcode(OP_CODESEPARATOR)
     }
 
-    fn get_covenant_script(pk: bitcoin::PublicKey, asset: confidential::Asset, collector_pk: Script) -> Script{
-//
-        let scriptpk_len = 395;//Change this
+    fn get_covenant_script(ctx: &CovenantScriptContext) -> Script{
         // Create a covenant that captures value
         // Create a pre-script
-        let builder = pre_code_sep();
+        let builder = pre_code_sep(ctx);
         let h = hash160::Hash::hash(&builder.clone().into_script().as_bytes());
-        let script = post_code_sep(builder, h.into_inner()).into_script();
+        let script = post_code_sep(builder, h.into_inner(), ctx.redeem_pk).into_script();
         script
-        // Find the pos of code_sep
-        
-
-        // // The sighash is now verified; now check all the fields in the transaction
-        // // First get the script_pubkey onto the stack
-        // let script_pubkey_start = 4 + 32 + 32 + 32 + 36 + 3;// The last 3 is for the size of len(script)
-        // let post_start_index = 3 + 33;
-        // let mut builder = builder.push_int(script_pubkey_start).push_opcode(OP_RIGHT)
-        // .push_opcode(OP_DUP).push_opcode(OP_2DUP).push_opcode(OP_3DUP) 
-        
-        // // stack [witness.. scriptpk_*6]
-        // // scriptpk_ denotes starting from scriptpk till the end of sighash
-        // // Alt stack [None]
-        // .push_int(scriptpk_len + 4 + 9).push_int(32).push_opcode(OP_SUBSTR)
-        // .push_opcode(OP_TOALTSTACK)
-
-        // // Stack [witnes... scriptpk_*5]
-        // // Alt-stack [hashoutputs]
-        // .push_int(scriptpk_len).push_opcode(OP_LEFT)
-        // .push_opcode(OP_SHA256).push_opcode(OP_TOALTSTACK) 
-        
-        // // Stack [witnes... scriptpk_*4]
-        // // Alt-stack [hashoutputs sha256(script_pubkey)]
-        // .push_int(post_start_index).push_int(scriptpk_len - post_start_index)
-        // .push_opcode(OP_SUBSTR).push_opcode(OP_TOALTSTACK)
-        // // Stack [witnes... scriptpk_*3]
-        // // Alt-stack [hashoutputs sha256(script_pubkey) post]
-        // .push_int(3).push_opcode(OP_LEFT)
-        // .push_opcode(OP_SWAP)
-        // // Stack [witnes... script_pk_*2]
-        // // Alt-stack [hashoutputs sha256(script_pubkey) post pre]
-        // // Check input explicit???
-        // .push_int(scriptpk_len).push_int(1).push_opcode(OP_SUBSTR)
-        // .push_int(1).push_opcode(OP_EQUALVERIFY).push_opcode(OP_DROP)
-        
-        // // Stack [witnes... script_pk_]
-        // // Alt-stack [hashoutputs sha256(script_pubkey) post pre]
-        // // Check total size???
-        // .push_opcode(OP_SIZE).push_int(scriptpk_len + 9 + 4 + 32 + 4 + 4)
-        // .push_opcode(OP_EQUALVERIFY).push_opcode(OP_DROP)
-
-        // // Stack [witnes...]
-        // // Alt-stack [hashoutputs sha256(script_pubkey) post pre]
-        // .push_opcode(OP_FROMALTSTACK).push_opcode(OP_FROMALTSTACK);
-
-        // // Stack [witnes... pre post]
-        // // Alt-stack [hashoutputs sha256(script_pubkey)]
-        // // Process atmost `k` keys
-        // let num_cov_outs = 2;
-        // for _ in 0..num_cov_outs{
-        //     builder = process_pk(builder)
-        // }
-
-        // // Stack [witness]
-        // // Alt-stack [hashoutputs sha256(script_pubkey) sha256(pk1) sha256(pk2) sha256(pk3)]
-        // // Process the outputs. Index 0 must be covenant fee output
-
-        // // TODO: Change this
-        // let builder = builder.push_opcode(OP_PUSHBYTES_0);// accumulator for TxOutput
-        // let builder = checkelem_cat(builder, &serialize(&asset));
-        // let builder = checksize_cat(builder, 9);
-
-        // let mut remain_bytes = vec![0u8];
-        
-        // assert!(collector_pk.is_v0_p2wsh());
-        // remain_bytes.extend(&collector_pk.to_bytes());
-        // let mut builder = checkelem_cat(builder, &remain_bytes);
-
-        // // Check the other outputs
-        // let max_outputs = 2;
-        // for _ in 0..max_outputs{
-        //     builder = process_output(builder, &serialize(&asset));
-        // }
-
-        // // If not having any change output. Allow the user to drop from alt stack
-        // let builder = builder.push_opcode(OP_IF)
-        //     .push_opcode(OP_FROMALTSTACK)
-        //     .push_opcode(OP_DROP)
-        // .push_opcode(OP_ENDIF);
-
-        // // Get the last fee output
-        // // Note we only check whether this has the correct size.
-        // // None of the previous could have been fee output as they were forced
-        // // to be p2wsh. 
-        // let builder = checkelem_cat(builder, &serialize(&asset));
-        // let builder = checksize_cat(builder, 9 + 1 + 1);
-        // // Now calculate the hashoutput and match it
-        // let builder = 
-        //     builder.push_opcode(OP_HASH256).push_opcode(OP_FROMALTSTACK).push_opcode(OP_EQUALVERIFY);
-        // let script_pubkey = builder.into_script();
-        // assert_eq!(scriptpk_len as usize, script_pubkey.len());
-        // script_pubkey
     }
+
+    fn get_exp_amt(amt: confidential::Value) -> u64{
+        if let confidential::Value::Explicit(x) = amt{
+            x
+        } else {
+            panic!("Must have explicit amounts");
+        }
+    }
+
+
     #[test]
     fn simple_covenant(){
-        let asset: [u8; 32] = [
-            0x23, 0x0f, 0x4f, 0x5d, 0x4b, 0x7c, 0x6f, 0xa8, 0x45, 0x80, 0x6e, 0xe4, 0xf6, 0x77,
-            0x13, 0x45, 0x9e, 0x1b, 0x69, 0xe8, 0xe6, 0x0f, 0xce, 0xe2, 0xe4, 0x94, 0x0c, 0x7a,
-            0x0d, 0x5d, 0xe1, 0xb2,
-        ];
-        let asset = confidential::Asset::Explicit(AssetId::from_inner(Midstate(asset)));
+        use bitcoin_hashes::hex::FromHex;
+        let traded_asset = AssetId::from_hex("7c8c7af242719c9a1aae3418cd3f82b3168ac215788a0f15716dacef6397e8b2").unwrap();
+        let traded_asset = confidential::Asset::Explicit(traded_asset);
 
-        let mut tx = create_tx(0, 0);
-        use std::str::FromStr;
-        use bitcoin::secp256k1::Secp256k1;
-        let test_pk = bitcoin::PublicKey::from_str("02a05cab7cf0e66e6684b22c15fa524ffcff8913a9088780ecccc3e7b10baaaa81").unwrap();
-        let test_priv_key = bitcoin::PrivateKey::from_wif("cVGQewjMcqa5PBvSvid8XeqoKA66YsVf6U9EkbgR4HFhU6DHsrEg").unwrap();
+        // create some random keys 
+        let redeem_pk = bitcoin::PublicKey::from_str("02a05cab7cf0e66e6684b22c15fa524ffcff8913a9088780ecccc3e7b10baaaa81").unwrap();
+        let redeem_priv_key = bitcoin::PrivateKey::from_wif("cVGQewjMcqa5PBvSvid8XeqoKA66YsVf6U9EkbgR4HFhU6DHsrEg").unwrap();
+        let fee_collector_srv_pk = bitcoin::PublicKey::from_str("02d34800ac89c2f27ae8938c2ea370bd63d5d47926d71243deb492966d1e37e355").unwrap();
+        let fee_collector_srv_priv_key = bitcoin::PrivateKey::from_wif("cPNAjBG689Yj71yRwybLvF1uUDVWA9gB2CwDynoUq5CQRNciBa77").unwrap();
+        let timestamp_srv_pk = bitcoin::PublicKey::from_str("03642e750575c0692c7c6984f5eb3ceaa81a619820eee2290caeeb7affc303abdb").unwrap();
+        let timestamp_srv_priv_key = bitcoin::PrivateKey::from_wif("cMtnxwXc1JEAzRzi6xCGEm4Vig7ECcW4JyczPfyhwpjBiDAJPeDP").unwrap();
+        let receiver_pk = bitcoin::PublicKey::from_str("032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af").unwrap();
 
         let secp = Secp256k1::new();
-        assert!(test_pk == test_priv_key.public_key(&secp));
+        assert!(redeem_pk == redeem_priv_key.public_key(&secp));
+        assert!(fee_collector_srv_pk == fee_collector_srv_priv_key.public_key(&secp));
+        assert!(timestamp_srv_pk == timestamp_srv_priv_key.public_key(&secp));
         
         // Create a legit script here
-        let tmp = Script::new();
+        // Right now; anyone can spend wsh
+        let fee_collector_wsh = Builder::new().push_int(1).into_script();
 
-        let script_pubkey = get_covenant_script(test_pk, asset, tmp.to_v0_p2wsh());
+        let cov_script_ctx = CovenantScriptContext{
+            traded_asset: traded_asset,
+            redeem_pk: redeem_pk,
+            fee_collector_wsh : fee_collector_wsh.to_v0_p2wsh(),
+            // server pks
+            fee_collector_srv_pk: fee_collector_srv_pk,
+            timestamp_srv_pk: timestamp_srv_pk,
+        };
+
+        let script_pubkey = get_covenant_script(&cov_script_ctx);
         println!("{}", &script_pubkey);
-        tx.output[0].script_pubkey = script_pubkey.to_v0_p2wsh();
+        // tx.output[0].script_pubkey = script_pubkey.to_v0_p2wsh();
 
-        println!("{}", address::Address::p2wsh(&script_pubkey, None, &AddressParams::ELEMENTS));
-        println!("{}", serialize_hex(&tx));
+        println!("asset: {}", address::Address::p2wsh(&script_pubkey, None, &AddressParams::ELEMENTS));
+        println!("btc: {}", address::Address::p2wsh(&fee_collector_wsh, None, &AddressParams::ELEMENTS));
+        println!("script_wsh: {}", script_pubkey.to_v0_p2wsh());
+        // println!("{}", serialize_hex(&tx));
 
         // Now create a transaction spending this.
-        let mut spend_tx = Transaction {
+        let spend_tx = Transaction {
             version: 2,
             lock_time: 0,
-            input: vec![TxIn {
-                previous_output: OutPoint {
-                    txid: bitcoin::Txid::from_str("e79659cb4925cd88cfa722c907c9828cd476c5b1e6d3c71a92a727c79e49d08e").unwrap(),
-                    vout: 1,
-                },
-                sequence: 0xfffffffe,
-                is_pegin: false,
-                has_issuance: false,
-                // perhaps make this an option in elements upstream?
-                asset_issuance: AssetIssuance {
-                    asset_blinding_nonce: [0; 32],
-                    asset_entropy: [0; 32],
-                    amount: confidential::Value::Null,
-                    inflation_keys: confidential::Value::Null,
-                },
-                script_sig: Script::new(),
-                witness: TxInWitness {
-                    amount_rangeproof: vec![],
-                    inflation_keys_rangeproof: vec![],
-                    script_witness: vec![],
-                    pegin_witness: vec![],
-                },
-            }],
+            input: vec![
+                txin_from_txid_vout("14256a22981e4c7bdc15e2e97f2243af66a647848aa2adfc30859f868dcb69f3", 1),//asset
+                txin_from_txid_vout("b63ae284f16c676a3da8611ec836acf2982536f58bb5877eeb750a217fa90778", 1),//btc
+                ],
             output: vec![
-                TxOut {
-                    asset: asset.clone(),
-                    value: confidential::Value::Explicit(1000000),
-                    nonce: confidential::Nonce::Null,
-                    script_pubkey: tmp.to_v0_p2wsh(),
-                    witness: TxOutWitness {
-                        surjection_proof: vec![],
-                        rangeproof: vec![],
-                    },
-                },
-                TxOut {
-                    asset: asset.clone(),
-                    value: confidential::Value::Explicit(98000000),
-                    nonce: confidential::Nonce::Null,
-                    script_pubkey: script_pubkey.to_v0_p2wsh(),
-                    witness: TxOutWitness {
-                        surjection_proof: vec![],
-                        rangeproof: vec![],
-                    },
-                },
-                TxOut {
-                    asset: asset.clone(),
-                    value: confidential::Value::Explicit(1000000),
-                    nonce: confidential::Nonce::Null,
-                    script_pubkey: Script::new(),
-                    witness: TxOutWitness {
-                        surjection_proof: vec![],
-                        rangeproof: vec![],
-                    },
-                },
             ],
         };
 
+        let mut ctx = CovenantTxContext{
+            tx: spend_tx,
+            index: 0,
+            // The covenant script context
+            cov_script_ctx: cov_script_ctx,
+            receiver_pk: receiver_pk,
+            //amts
+            sent_amt: confidential::Value::Explicit(98_000_000_u64),
+            change_amt: confidential::Value::Explicit(1_000_000_u64),
+            fee_amt: confidential::Value::Explicit(1_000_000_u64),
+            tx_fee_btc: confidential::Value::Explicit(1_000_000_u64),
+    
+            redeem_priv_key: redeem_priv_key,
+    
+            // Sigs and msgs
+            timestamp_srv_msg : vec![],
+            timestamp_srv_sig : vec![],
+            fee_srv_msg : vec![],
+            fee_srv_sig : vec![],
+        };
 
-        let pre_code = pre_code_sep().into_script().into_bytes();
-        let script_code = 
-        post_code_sep(Builder::new(), hash160::Hash::hash(&pre_code).into_inner()).into_script();
-        let mut cache = SigHashCache::new(&spend_tx);
-        let sighash_type = SigHashType::from_u32(1);
-        let actual_result = cache.signature_hash(0, &script_code, confidential::Value::Explicit(0x0000000005f5e100), sighash_type);
-        // let mut enc = SigHash::engine();
-        println!("{:x?}", &actual_result);
+
+        finalize(&mut ctx);
+        let mut stk = ctx.tx.input[0].witness.script_witness.clone();
+        stk.pop().unwrap();
+        assert!(stk.len() == 13);
+        println!("Max elem len: {}", stk.clone().into_iter().map(|v| v.len()).max().unwrap());
+
+
+        let mut spend_tx = ctx.tx;
         let mut ser_out = vec![];
         for tx_out in &spend_tx.output{
             ser_out.extend(serialize(tx_out));
         }
         println!("{:x?}", ser_out);
-        println!("{:x?}", serialize(&spend_tx.output[0].script_pubkey));
-        assert_eq!(actual_result[8], SigHash::hash(&ser_out).into_inner());
-        let sighash_msg : Vec<u8> = actual_result.into_iter().flatten().collect();
-        let mut eng = SigHash::engine();
-        use bitcoin_hashes::HashEngine;
-        eng.input(&sighash_msg);
-        let sighash_u256 = SigHash::from_engine(eng);
+        println!("{:?}", spend_tx.output[0]);
+        let mut interp = interpreter::State::init_witness(stk.clone());
+        interp.execute_script(script_pubkey.clone());
 
-        println!("{} Msg here", sighash_u256);
-        let sig = secp.sign( &bitcoin::secp256k1::Message::from_slice(&sighash_u256[..]).unwrap(), &test_priv_key.key);
-        let ser_sig = Vec::from(sig.serialize_der().as_ref());
-        
-        // ser_sig.push(1u8); // sighash all
-        println!("Msg len: {}", sighash_msg.len());
-        let mut stk = vec![ser_sig, sighash_msg, test_pk.to_bytes(), pre_code];
 
-        // let mut interp = interpreter::State::init_witness(stk.clone());
-        // interp.execute_script(script_pubkey.clone());
 
         stk.push(script_pubkey.clone().into_bytes());
         spend_tx.input[0].witness.script_witness = stk;
+        spend_tx.input[1].witness.script_witness = vec![fee_collector_wsh.to_bytes()];
         println!("{}", serialize_hex(&spend_tx));
+    }
+
+    fn txin_from_txid_vout(txid: &str, vout: u32) -> TxIn{
+        TxIn {
+            previous_output: OutPoint {
+                txid: bitcoin::Txid::from_str(txid).unwrap(),
+                vout: vout,
+            },
+            sequence: 0xfffffffe,
+            is_pegin: false,
+            has_issuance: false,
+            // perhaps make this an option in elements upstream?
+            asset_issuance: AssetIssuance {
+                asset_blinding_nonce: [0; 32],
+                asset_entropy: [0; 32],
+                amount: confidential::Value::Null,
+                inflation_keys: confidential::Value::Null,
+            },
+            script_sig: Script::new(),
+            witness: TxInWitness {
+                amount_rangeproof: vec![],
+                inflation_keys_rangeproof: vec![],
+                script_witness: vec![],
+                pegin_witness: vec![],
+            },
+        }
     }
 }

@@ -88,7 +88,13 @@ impl State{
         }
         match ins {
             // Push a bunch of data
-            Instruction::PushBytes(data) => self.stack.push(Vec::from(data)),
+            Instruction::PushBytes(data) => {
+                if data.len() == 0 {
+                    self.stack.push(vec![0u8]);
+                } else{
+                self.stack.push(Vec::from(data));
+                }
+            }
             /// Some non-push opcode
             Instruction::Op(op) => {
                 match op{
@@ -98,6 +104,14 @@ impl State{
                         let h= bitcoin::hashes::hash160::Hash::hash(&a);
                         self.stack.push(Vec::from(h.into_inner()));                    
                     }
+                    OP_HASH256 => {
+                        let a = self.stack.pop().expect("OP_CAT pop error");
+                        let h= bitcoin::hashes::sha256d::Hash::hash(&a);
+                        self.stack.push(Vec::from(h.into_inner()));                    
+                    }
+                    OP_PUSHBYTES_0 => {
+                        self.stack.push(vec![0u8]);
+                    }
                     OP_PUSHNUM_2 => {
                         self.stack.push(vec![2u8]);
                     }
@@ -106,6 +120,39 @@ impl State{
                     }
                     OP_PUSHNUM_3 => {
                         self.stack.push(vec![3u8]);
+                    }
+                    OP_PUSHNUM_4 => {
+                        self.stack.push(vec![4u8]);
+                    }
+                    OP_PUSHNUM_5 => {
+                        self.stack.push(vec![5u8]);
+                    }
+                    OP_PUSHNUM_6 => {
+                        self.stack.push(vec![6u8]);
+                    }
+                    OP_PUSHNUM_7 => {
+                        self.stack.push(vec![7u8]);
+                    }
+                    OP_PUSHNUM_8 => {
+                        self.stack.push(vec![8u8]);
+                    }
+                    OP_PUSHNUM_9 => {
+                        self.stack.push(vec![9u8]);
+                    }
+                    OP_PUSHNUM_10 => {
+                        self.stack.push(vec![10u8]);
+                    }
+                    OP_PUSHNUM_11 => {
+                        self.stack.push(vec![11u8]);
+                    }
+                    OP_PUSHNUM_12 => {
+                        self.stack.push(vec![12u8]);
+                    }
+                    OP_PUSHNUM_13 => {
+                        self.stack.push(vec![13u8]);
+                    }
+                    OP_PUSHNUM_14 => {
+                        self.stack.push(vec![14u8]);
                     }
                     OP_CAT => {
                         let a = self.stack.pop().expect("OP_CAT pop error");
@@ -124,6 +171,11 @@ impl State{
                     OP_PICK => {
                         let n = read_scriptint(&self.stack.pop().unwrap()).unwrap() as usize;
                         let elem = self.stack[self.stack.len() - 1 - n ].clone();
+                        self.stack.push(elem);
+                    }
+                    OP_ROLL => {
+                        let n = read_scriptint(&self.stack.pop().unwrap()).unwrap() as usize;
+                        let elem = self.stack.remove(self.stack.len() - 1 - n );
                         self.stack.push(elem);
                     }
                     OP_CHECKSIGVERIFY | OP_2DROP => {
@@ -151,7 +203,7 @@ impl State{
                         let size = read_scriptint(&self.stack.pop().unwrap()).unwrap() as usize;
                         let begin = read_scriptint(&self.stack.pop().unwrap()).unwrap() as usize;
                         let mut elem = self.stack.pop().unwrap();
-                        elem.drain(begin..(begin+size));
+                        let elem = elem.drain(begin..(begin+size)).collect();
                         self.stack.push(elem);
                     }
                     OP_DUP => {
@@ -245,23 +297,25 @@ impl State{
 
     pub fn execute_script(&mut self, script: Script){
         let mut ctx = Context::NoContext;
+        let mut skip_print = false;
         for ins in script.iter(true){
             self.step(ins.clone(), &mut ctx);
 
             let mut input = String::new();
             println!("Type y for step; n for exit");
-            match io::stdin().read_line(&mut input) {
-                Ok(_n) => {
-                    if input == "y\n" {
-                        println!("{:?}", ins);
-                        self.print();
-                        continue;
-                    } else{
-                        dbg!(input);
-                        break
+            if !skip_print{
+                match io::stdin().read_line(&mut input) {
+                    Ok(_n) => {
+                        if input == "y\n" {
+                            println!("{:?}", ins);
+                            self.print();
+                            continue;
+                        } else{
+                            skip_print = true;
+                        }
                     }
+                    Err(error) => println!("error: {}", error),
                 }
-                Err(error) => println!("error: {}", error),
             }
         }
     }
