@@ -25,7 +25,7 @@
 //!
 
 use std::default::Default;
-use std::{error, fmt, io, ops};
+use std::{fmt, io, ops};
 
 #[cfg(feature = "serde")] use serde;
 
@@ -675,6 +675,10 @@ impl Builder {
             Some(opcodes::all::OP_CHECKMULTISIG) => {
                 self.0.pop();
                 self.push_opcode(opcodes::all::OP_CHECKMULTISIGVERIFY)
+            },
+            Some(opcodes::all::OP_CHECKSIGFROMSTACK) => {
+                self.0.pop();
+                self.push_opcode(opcodes::all::OP_CHECKSIGFROMSTACKVERIFY)
             },
             _ => self.push_opcode(opcodes::all::OP_VERIFY),
         }
