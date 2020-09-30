@@ -19,14 +19,14 @@ use std::{io, fmt};
 use std::collections::HashMap;
 
 use bitcoin::{self, VarInt};
-use bitcoin::blockdata::opcodes;
-use bitcoin::blockdata::script::{Script, Instruction};
 use bitcoin::hashes::Hash;
 
 use confidential;
 use encode::{self, Encodable, Decodable};
 use issuance::AssetId;
-use {Txid, Wtxid};
+use opcodes;
+use script::Instruction;
+use {Script, Txid, Wtxid};
 
 /// Description of an asset issuance in a transaction input
 #[derive(Copy, Clone, Debug, Default, Eq, Hash, PartialEq, PartialOrd, Ord)]
