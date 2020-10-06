@@ -81,7 +81,7 @@ mod tests {
     use crate::encode::{serialize, serialize_hex};
     use bip143::SigHashCache;
     use bitcoin::secp256k1::{self, Secp256k1};
-    use bitcoin_hashes::{hash160, sha256, sha256::Midstate, HashEngine};
+    use bitcoin_hashes::{hash160, sha256::Midstate, HashEngine};
     use opcodes::all::*;
     use script::Builder;
     use std::str::FromStr;
@@ -171,7 +171,7 @@ mod tests {
     //         .push_opcode(OP_ENDIF)
     // }
 
-    fn check_elem_zeros(builder: Builder) -> Builder {
+    fn _check_elem_zeros(builder: Builder) -> Builder {
         let mut arr = vec![];
         let mut builder2 = builder;
         for i in 0..3 {
@@ -278,7 +278,7 @@ mod tests {
 
     // assumes the stack contains 4 values on top.
     // [ high_bits_b, low_bits_b, high_bits_a, low_bits_a]
-    fn perform_add(builder: Builder, stk_size: &mut i64) -> Builder {
+    fn _perform_add(builder: Builder, stk_size: &mut i64) -> Builder {
         let builder = builder
             .push_int(2)
             .push_opcode(OP_ROLL)
@@ -326,7 +326,7 @@ mod tests {
         let mut builder = builder;
 
         let mut start_pos = start_pos;
-        for i in 0..6 {
+        for _i in 0..6 {
             builder = builder
                 .push_opcode(OP_DUP)
                 .push_int(start_pos)
@@ -363,7 +363,7 @@ mod tests {
         let mut builder = builder;
 
         let mut start_pos = start_pos;
-        for i in 0..5 {
+        for _i in 0..5 {
             builder = builder
                 .push_opcode(OP_DUP)
                 .push_int(start_pos)
@@ -935,7 +935,7 @@ mod tests {
             .push_int(stk_size - 2)
             .push_opcode(OP_ROLL)
             .push_opcode(OP_DROP);
-        stk_size -= 1;
+        // stk_size -= 1;
         let builder = builder
             .push_opcode(OP_2DROP)
             .push_opcode(OP_2DROP)

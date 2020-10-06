@@ -376,7 +376,7 @@ impl State {
 
     pub(crate) fn execute_script(&mut self, script: Script) {
         let mut ctx = Context::NoContext;
-        let mut skip_print = false;
+        let mut skip_print = true;
         let num_skip_steps = 160;
         for (i, ins2) in script.instructions().enumerate() {
             let ins = ins2.unwrap();
