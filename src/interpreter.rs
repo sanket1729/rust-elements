@@ -19,7 +19,7 @@ pub(crate) struct State {
 
 impl State {
     fn print(&self) {
-        println!("Stack:");
+        println!("Stack: len {}", self.stack.len());
         for v in &self.stack {
             println!("{:x?}", v);
         }
@@ -66,6 +66,7 @@ enum Context {
     NotIfContext,
     ElseContext,
     NoContext,
+    IfDone,
 }
 
 impl State {
@@ -80,6 +81,12 @@ impl State {
         if *ctx == Context::NotIfContext {
             match ins.clone() {
                 Instruction::Op(OP_ELSE) | Instruction::Op(OP_ENDIF) => {}
+                _ => return,
+            }
+        }
+        if *ctx == Context::IfDone {
+            match ins.clone() {
+                Instruction::Op(OP_ENDIF) => {}
                 _ => return,
             }
         }
@@ -149,6 +156,12 @@ impl State {
                 OP_PUSHNUM_14 => {
                     self.stack.push(vec![14u8]);
                 }
+                OP_PUSHNUM_15 => {
+                    self.stack.push(vec![15u8]);
+                }
+                OP_PUSHNUM_16 => {
+                    self.stack.push(vec![16u8]);
+                }
                 OP_CAT => {
                     let a = self.stack.pop().expect("OP_CAT pop error");
                     let mut b = self.stack.pop().expect("OP_CAT pop error");
@@ -161,6 +174,7 @@ impl State {
                 }
                 OP_SHA256 => {
                     let a = self.stack.pop().expect("SHA2 pop");
+                    println!("{:x?}", Vec::from(sha256::Hash::hash(&a).into_inner()));
                     self.stack
                         .push(Vec::from(sha256::Hash::hash(&a).into_inner()))
                 }
@@ -184,6 +198,7 @@ impl State {
                     let msg =
                         bitcoin::secp256k1::Message::from_slice(&sha256::Hash::hash(&msg[..]))
                             .unwrap();
+                    // println!("{:x?}", sha256::Hash::hash(&msg[..]));
                     let sig = bitcoin::secp256k1::Signature::from_der(&self.stack.pop().unwrap())
                         .unwrap();
                     let secp = bitcoin::secp256k1::Secp256k1::verification_only();
@@ -192,8 +207,10 @@ impl State {
                 }
                 OP_CHECKSIGFROMSTACKVERIFY => {
                     let pk = bitcoin::PublicKey::from_slice(&self.stack.pop().unwrap()).unwrap();
-                    let msg = bitcoin::secp256k1::Message::from_slice(&self.stack.pop().unwrap())
-                        .unwrap();
+                    let msg = self.stack.pop().unwrap();
+                    let msg =
+                        bitcoin::secp256k1::Message::from_slice(&sha256::Hash::hash(&msg[..]))
+                            .unwrap();
                     let sig = bitcoin::secp256k1::Signature::from_der(&self.stack.pop().unwrap())
                         .unwrap();
                     let secp = bitcoin::secp256k1::Secp256k1::verification_only();
@@ -203,6 +220,14 @@ impl State {
                     let ind = read_scriptint(&self.stack.pop().unwrap()).unwrap() as usize;
                     let mut elem = self.stack.pop().unwrap();
                     self.stack.push(elem.split_off(ind));
+                }
+                OP_LSHIFT => {
+                    let ind = read_scriptint(&self.stack.pop().unwrap()).unwrap() as usize;
+                    let mut elem = self.stack.pop().unwrap();
+                    for _i in 0..ind / 8 {
+                        elem.insert(0, 0u8);
+                    }
+                    self.stack.push(elem);
                 }
                 OP_LEFT => {
                     let ind = read_scriptint(&self.stack.pop().unwrap()).unwrap() as usize;
@@ -254,6 +279,10 @@ impl State {
                 OP_DROP => {
                     self.stack.pop().unwrap();
                 }
+                OP_VERIFY => {
+                    let x = self.stack.pop().unwrap();
+                    assert!(x != vec![0]);
+                }
                 OP_SIZE => {
                     self.stack
                         .push(build_scriptint(self.stack.last().unwrap().len() as i64));
@@ -263,10 +292,45 @@ impl State {
                     let b = self.stack.pop().unwrap();
                     self.stack.push(vec![(a == b) as u8]);
                 }
+                OP_BOOLOR => {
+                    let a = read_scriptint(&self.stack.pop().unwrap()).unwrap();
+                    let b = read_scriptint(&self.stack.pop().unwrap()).unwrap();
+                    self.stack.push(build_scriptint((a != 0 || b != 0) as i64));
+                }
+                OP_BOOLAND => {
+                    let a = read_scriptint(&self.stack.pop().unwrap()).unwrap();
+                    let b = read_scriptint(&self.stack.pop().unwrap()).unwrap();
+                    self.stack.push(build_scriptint((a != 0 && b != 0) as i64));
+                }
+                OP_ADD => {
+                    let a = read_scriptint(&self.stack.pop().unwrap()).unwrap();
+                    let b = read_scriptint(&self.stack.pop().unwrap()).unwrap();
+                    self.stack.push(build_scriptint((a + b) as i64));
+                }
+                OP_GREATERTHAN => {
+                    let a = read_scriptint(&self.stack.pop().unwrap()).unwrap();
+                    let b = read_scriptint(&self.stack.pop().unwrap()).unwrap();
+                    self.stack.push(build_scriptint((b > a) as i64));
+                }
+                OP_LESSTHANOREQUAL => {
+                    let a = read_scriptint(&self.stack.pop().unwrap()).unwrap();
+                    let b = read_scriptint(&self.stack.pop().unwrap()).unwrap();
+                    self.stack.push(build_scriptint((b <= a) as i64));
+                }
+                OP_NEGATE => {
+                    let a = read_scriptint(&self.stack.pop().unwrap()).unwrap();
+                    self.stack.push(build_scriptint(-a as i64));
+                }
                 OP_EQUALVERIFY => {
-                    let a = self.stack.pop().unwrap();
-                    let b = self.stack.pop().unwrap();
-                    assert!(a == b)
+                    let mut a = self.stack.pop().unwrap();
+                    let mut b = self.stack.pop().unwrap();
+                    if a.len() == 0 {
+                        a.push(0u8);
+                    }
+                    if b.len() == 0 {
+                        b.push(0u8);
+                    }
+                    assert!(a == b);
                 }
                 OP_2SWAP => {
                     let l = self.stack.len();
@@ -284,6 +348,7 @@ impl State {
                 }
                 OP_IF => {
                     let cond = read_scriptbool(&self.stack.pop().unwrap());
+                    println!("here {}", cond);
                     if cond {
                         *ctx = Context::IfContext;
                     } else {
@@ -291,11 +356,15 @@ impl State {
                     }
                 }
                 OP_ELSE => {
-                    assert!(*ctx == Context::NotIfContext);
-                    *ctx = Context::ElseContext;
+                    if *ctx == Context::IfContext {
+                        *ctx = Context::IfDone;
+                    } else {
+                        assert!(*ctx == Context::NotIfContext);
+                        *ctx = Context::ElseContext;
+                    }
                 }
                 OP_ENDIF => {
-                    assert!(*ctx == Context::NotIfContext || *ctx == Context::ElseContext);
+                    // assert!(*ctx == Context::IfDone || *ctx == Context::ElseContext);
                     *ctx = Context::NoContext;
                 }
                 x => {
@@ -307,31 +376,31 @@ impl State {
 
     pub(crate) fn execute_script(&mut self, script: Script) {
         let mut ctx = Context::NoContext;
-        let mut _skip_print = false;
-        let num_skip_steps = 88;
+        let mut skip_print = false;
+        let num_skip_steps = 160;
         for (i, ins2) in script.instructions().enumerate() {
             let ins = ins2.unwrap();
             self.step(ins.clone(), &mut ctx);
 
-            let mut _input = String::new();
+            let mut input = String::new();
             if i < num_skip_steps {
                 continue;
             }
             // println!("Type y for step; n for exit");
-            // if !skip_print {
-            //     match io::stdin().read_line(&mut input) {
-            //         Ok(_n) => {
-            //             if input == "y\n" {
-            //                 println!("{:?}", ins);
-            //                 self.print();
-            //                 continue;
-            //             } else {
-            //                 skip_print = true;
-            //             }
-            //         }
-            //         Err(error) => println!("error: {}", error),
-            //     }
-            // }
+            if !skip_print {
+                match io::stdin().read_line(&mut input) {
+                    Ok(_n) => {
+                        if input == "y\n" {
+                            println!("{:?}", ins);
+                            self.print();
+                            continue;
+                        } else {
+                            skip_print = true;
+                        }
+                    }
+                    Err(error) => println!("error: {}", error),
+                }
+            }
         }
     }
 }
