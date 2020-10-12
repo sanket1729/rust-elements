@@ -19,11 +19,11 @@
 //! signatures, which are placed in the scriptSig.
 //!
 
-use bitcoin::blockdata::script::Script;
-use bitcoin::hash_types::SigHash;
-use bitcoin::hashes::{sha256, sha256d, Hash};
+use bitcoin_hashes::{sha256, sha256d, Hash};
 use encode::serialize;
 use encode::Encodable;
+use hash_types::SigHash;
+use script::Script;
 use std::ops::Deref;
 use transaction::SigHashType;
 use transaction::Transaction;
