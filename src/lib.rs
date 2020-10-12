@@ -64,6 +64,6 @@ pub use hash_types::*;
 pub use issuance::{AssetId, ContractHash};
 pub use script::Script;
 pub use transaction::{
-    AssetIssuance, OutPoint, PeginData, PegoutData, Transaction, TxIn, TxInWitness, TxOut,
-    TxOutWitness,
+    AssetIssuance, OutPoint, PeginData, PegoutData, SigHashType, Transaction, TxIn, TxInWitness,
+    TxOut, TxOutWitness,
 };
