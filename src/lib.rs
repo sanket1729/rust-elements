@@ -28,14 +28,19 @@
 pub extern crate bitcoin;
 #[macro_use]
 pub extern crate bitcoin_hashes;
+#[cfg(feature = "serde")]
+extern crate serde;
 extern crate slip21;
-#[cfg(feature = "serde")] extern crate serde;
 
-#[cfg(test)] extern crate rand;
-#[cfg(any(test, feature = "serde_json"))] extern crate serde_json;
+#[cfg(test)]
+extern crate rand;
+#[cfg(any(test, feature = "serde_json"))]
+extern crate serde_json;
 
-#[macro_use] mod internal_macros;
+#[macro_use]
+mod internal_macros;
 pub mod address;
+pub mod bip143;
 pub mod blech32;
 mod block;
 pub mod confidential;
@@ -46,17 +51,19 @@ pub mod hash_types;
 pub mod issuance;
 pub mod opcodes;
 pub mod script;
-mod transaction;
 pub mod slip77;
+mod transaction;
 
 // export everything at the top level so it can be used as `elements::Transaction` etc.
-pub use address::{Address, AddressParams, AddressError};
-pub use transaction::{OutPoint, PeginData, PegoutData, TxIn, TxOut, TxInWitness, TxOutWitness, Transaction, AssetIssuance};
-pub use block::{BlockHeader, Block};
+pub use address::{Address, AddressError, AddressParams};
+pub use bitcoin::consensus::encode::VarInt;
 pub use block::ExtData as BlockExtData;
-pub use ::bitcoin::consensus::encode::VarInt;
+pub use block::{Block, BlockHeader};
 pub use fast_merkle_root::fast_merkle_root;
 pub use hash_types::*;
 pub use issuance::{AssetId, ContractHash};
 pub use script::Script;
-
+pub use transaction::{
+    AssetIssuance, OutPoint, PeginData, PegoutData, Transaction, TxIn, TxInWitness, TxOut,
+    TxOutWitness,
+};
