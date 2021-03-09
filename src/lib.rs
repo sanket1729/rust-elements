@@ -29,7 +29,7 @@ pub extern crate bitcoin;
 #[macro_use]
 extern crate bitcoin_hashes as just_imported_for_the_macros;
 extern crate slip21;
-#[cfg(feature = "serde")] extern crate serde;
+#[cfg(feature = "serde")] #[macro_use] extern crate serde;
 
 #[cfg(test)] extern crate rand;
 #[cfg(any(test, feature = "serde_json"))] extern crate serde_json;
@@ -49,7 +49,9 @@ pub mod script;
 mod transaction;
 pub mod slip77;
 pub mod sighash;
-
+pub mod pset;
+#[cfg(feature = "serde")]
+mod serde_utils;
 // consider making upstream public
 mod endian;
 // re-export bitcoin deps which we re-use

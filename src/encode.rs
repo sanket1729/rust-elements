@@ -22,9 +22,12 @@ use bitcoin::consensus::encode as btcenc;
 use bitcoin::hashes::sha256;
 
 use transaction::{Transaction, TxIn, TxOut};
+use pset;
 
 pub use bitcoin::consensus::encode::MAX_VEC_SIZE;
 
+// Use the ReadExt/WriteExt traits as is from upstream
+pub use bitcoin::consensus::encode::{ReadExt, WriteExt};
 /// Encoding error
 #[derive(Debug)]
 pub enum Error {
@@ -43,6 +46,8 @@ pub enum Error {
     ParseFailed(&'static str),
     /// Invalid prefix for the confidential type.
     InvalidConfidentialPrefix(u8),
+    /// Pset related Errors
+    PsetError(pset::Error),
 }
 
 impl fmt::Display for Error {
@@ -56,6 +61,7 @@ impl fmt::Display for Error {
             } => write!(f, "oversized vector allocation: requested {}, maximum {}", r, m),
             Error::ParseFailed(ref e) => write!(f, "parse failed: {}", e),
             Error::InvalidConfidentialPrefix(p) => write!(f, "invalid confidential prefix: 0x{:02x}", p),
+            Error::PsetError(ref e) => write!(f, "Pset Error: {}", e),
         }
     }
 }
@@ -80,6 +86,13 @@ impl From<btcenc::Error> for Error {
 impl From<io::Error> for Error {
     fn from(error: io::Error) -> Self {
         Error::Io(error)
+    }
+}
+
+#[doc(hidden)]
+impl From<pset::Error> for Error {
+    fn from(e: pset::Error) -> Error {
+        Error::PsetError(e)
     }
 }
 
