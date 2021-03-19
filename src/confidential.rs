@@ -313,6 +313,13 @@ impl Nonce {
             Nonce::Confidential(..) => 33,
         }
     }
+
+    /// Convert a pubkey to a nonce
+    pub fn from_pubkey(pk: bitcoin::PublicKey) -> Self {
+        // inefficient implementation with round-trip of types
+        // TODO: unsafe implementation
+        encode::deserialize(&pk.key.serialize()).expect("Nonces same as Pks")
+    }
 }
 
 impl fmt::Display for Nonce {
