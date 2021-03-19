@@ -24,6 +24,7 @@ use std::{io, fmt};
 
 use encode::{self, Encodable, Decodable};
 use issuance::AssetId;
+use bitcoin;
 
 // Helper macro to implement various things for the various confidential
 // commitment types

@@ -24,7 +24,7 @@ use bitcoin::hashes::sha256;
 use transaction::{Transaction, TxIn, TxOut};
 use pset;
 
-pub use bitcoin::consensus::encode::MAX_VEC_SIZE;
+pub use bitcoin::{self, consensus::encode::MAX_VEC_SIZE};
 
 // Use the ReadExt/WriteExt traits as is from upstream
 pub use bitcoin::consensus::encode::{ReadExt, WriteExt};
@@ -183,6 +183,7 @@ impl_upstream!(Vec<u8>);
 impl_upstream!(Vec<Vec<u8>>);
 impl_upstream!(btcenc::VarInt);
 impl_upstream!(::hashes::sha256d::Hash);
+impl_upstream!(bitcoin::Transaction);
 
 // Vectors
 macro_rules! impl_vec {
