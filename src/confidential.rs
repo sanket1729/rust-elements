@@ -321,6 +321,12 @@ impl Nonce {
         // TODO: unsafe implementation
         encode::deserialize(&pk.key.serialize()).expect("Nonces same as Pks")
     }
+
+    /// Consume a confidential nonce and return a pk
+    /// Returns None for Null and Explicit
+    pub fn into_pubkey(&self) -> Option< bitcoin::PublicKey> {
+        bitcoin::PublicKey::from_slice(&encode::serialize(self)).ok()
+    }
 }
 
 impl fmt::Display for Nonce {

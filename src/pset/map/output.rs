@@ -106,6 +106,8 @@ impl Output{
         let mut rv = Self::default();
         rv.amount = txout.value;
         rv.script_pubkey = txout.script_pubkey;
+        rv.asset = txout.asset;
+        rv.ecdh_pubkey = txout.nonce.into_pubkey();
         rv
     }
 }
