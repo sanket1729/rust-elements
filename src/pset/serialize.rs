@@ -25,6 +25,7 @@ use encode::{self, serialize, Decodable};
 use bitcoin::util::bip32::{ChildNumber, Fingerprint, KeySource};
 use hashes::{hash160, ripemd160, sha256, sha256d, Hash};
 use pset;
+use bitcoin::hashes::hex::ToHex;
 use confidential;
 
 /// A trait for serializing a value as raw data for insertion into PSET
@@ -38,6 +39,11 @@ pub trait Serialize {
 pub trait Deserialize: Sized {
     /// Deserialize a value from raw data.
     fn deserialize(bytes: &[u8]) -> Result<Self, encode::Error>;
+}
+
+/// Encode an object into a hex-encoded string
+pub fn serialize_hex<T: Serialize + ?Sized>(data: &T) -> String {
+    Serialize::serialize(data)[..].to_hex()
 }
 
 impl_pset_de_serialize!(Transaction);
